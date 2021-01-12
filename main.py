@@ -1,7 +1,7 @@
 
 # coding: utf-8
 
-import matplotlib.pyplot as plt
+
 import torch
 import torchvision
 from torchvision import datasets, transforms, models
@@ -10,23 +10,15 @@ import torch.nn.functional as F
 from torch import optim
 from torch.autograd import Variable
 import numpy as np
-from matplotlib.image import imread
-from keras.models import Sequential
-from keras.layers import Dense, Dropout, Flatten
-from keras.layers import Conv2D, MaxPooling2D, BatchNormalization
-import tensorflow as tf
 import PIL
 from PIL import Image, ImageFile
 import cv2
 import os
-from tqdm import tqdm_notebook as tqdm
 import pandas as pd
 from torch.utils.data import Dataset
 from skimage import io
 import torchvision.transforms as transforms
 from torch.utils.data import DataLoader
-import seaborn as sns
-import matplotlib.pyplot as plt
 from sklearn.metrics import recall_score
 from sklearn.metrics import confusion_matrix
 from sklearn.metrics import precision_score
@@ -38,15 +30,7 @@ import time
 import sys
 import os
 import math
-import matplotlib.pyplot as plt
-import seaborn as sns
-ImageFile.LOAD_TRUNCATED_IMAGES = True
-########## SETTINGS
 
-pd.set_option('display.max_columns', None)
-%matplotlib inline
-import warnings
-warnings.filterwarnings('ignore')
 
 app = Flask("__name__")
 
@@ -86,18 +70,88 @@ def predict():
     return render_template('home.html', output=output, img = request.form['img'])
 
 
-def prepare_image(path, image_size=256):
-    # import
+def prepare_image(path, sigmaX = 10, do_random_crop = False):
+    
+    # import image
     image = cv2.imread(path)
     image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-
-    # resize
+    
+    # perform smart crops
+    image = crop_black(image, tol = 7)
+    if do_random_crop == True:
+        image = random_crop(image, size = (0.9, 1))
+    
+    # resize and color
     image = cv2.resize(image, (int(image_size), int(image_size)))
+    image = cv2.addWeighted(image, 4, cv2.GaussianBlur(image, (0, 0), sigmaX), -4, 128)
+    
+    # circular crop
+    image = circle_crop(image, sigmaX = sigmaX)
 
-    # convert to tensor
+    # convert to tensor    
     image = torch.tensor(image)
     image = image.permute(2, 1, 0)
     return image
+
+
+##### automatic crop of black areas
+def crop_black(img, tol = 7):
+    
+    if img.ndim == 2:
+        mask = img > tol
+        return img[np.ix_(mask.any(1),mask.any(0))]
+    
+    elif img.ndim == 3:
+        gray_img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+        mask = gray_img > tol
+        check_shape = img[:,:,0][np.ix_(mask.any(1),mask.any(0))].shape[0]
+        
+        if (check_shape == 0): 
+            return img 
+        else:
+            img1 = img[:,:,0][np.ix_(mask.any(1),mask.any(0))]
+            img2 = img[:,:,1][np.ix_(mask.any(1),mask.any(0))]
+            img3 = img[:,:,2][np.ix_(mask.any(1),mask.any(0))]
+            img  = np.stack([img1, img2, img3], axis = -1)
+            return img
+        
+        
+##### circular crop around image center
+def circle_crop(img, sigmaX = 10):   
+        
+    height, width, depth = img.shape
+    
+    largest_side = np.max((height, width))
+    img = cv2.resize(img, (largest_side, largest_side))
+
+    height, width, depth = img.shape
+    
+    x = int(width / 2)
+    y = int(height / 2)
+    r = np.amin((x,y))
+    
+    circle_img = np.zeros((height, width), np.uint8)
+    cv2.circle(circle_img, (x,y), int(r), 1, thickness = -1)
+    
+    img = cv2.bitwise_and(img, img, mask = circle_img)
+    return img 
+
+
+##### random crop
+def random_crop(img, size = (0.9, 1)):
+
+    height, width, depth = img.shape
+    
+    cut = 1 - random.uniform(size[0], size[1])
+    
+    i = random.randint(0, int(cut * height))
+    j = random.randint(0, int(cut * width))
+    h = i + int((1 - cut) * height)
+    w = j + int((1 - cut) * width)
+
+    img = img[i:h, j:w, :]    
+    
+    return img
 
 train_trans = torchvision.transforms.Compose([transforms.ToPILImage(),
                                   transforms.RandomRotation((-360, 360)),
@@ -117,6 +171,6 @@ _,pred = torch.max(outputs10.data,1)
 print(pred)
 
 
-if __name__ = "__main__":
+if __name__ == "__main__":
     app.run()
 
